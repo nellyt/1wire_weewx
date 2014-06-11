@@ -94,10 +94,6 @@ class onewire(weewx.abstractstation.AbstractStation):
 
         self.last_rain_time = time.time()
         self.last_other_time = time.time()
-        
-
-
-
 
         # The following doesn't make much meteorological sense, but it is easy to program!
         self.observations = {'outTemp'    : inTemp(),
@@ -134,7 +130,6 @@ class onewire(weewx.abstractstation.AbstractStation):
             # of the interval.
             avg_time = self.the_time - self.LOOP_INTERVAL/2.0
 
-
             if (time.time() - self.last_rain_time > self.RAIN_INTERVAL) :  
                 # TODO put assign last time here
                 _rainpacket = {'dateTime': int(self.the_time+0.5),
@@ -152,7 +147,7 @@ class onewire(weewx.abstractstation.AbstractStation):
                     _rainpacket['rainRateA'] = raindata[2]
                     _rainpacket['rainRateB'] = raindata[3]
                 yield _rainpacket
-	        self.last_rain_time = time.time()
+          self.last_rain_time = time.time()
             
             _windpacket = {'dateTime': int(self.the_time+0.5),
                        'usUnits' : weewx.METRIC }
@@ -194,27 +189,38 @@ class inTemp(object):
         """Some text"""
 
     def value_at(self, time_ts):
-        temp = float(ow.owfs_get('10.25A5A0020800/temperature'))
-        # possible catch needed here
-        return temp
+        try:
+          temp = float(ow.owfs_get('10.25A5A0020800/temperature'))
+          return temp
+        except ow.exError, e:
+          logerr("Failed attempt to get inTemp data: %s" % ( e))
+          return None
+          
+        
 
 class inHumid(object):
     def __init__(self):
         """Some text"""
 
     def value_at(self, time_ts):
-        humidity = float(ow.owfs_get('26.378C21010000/HIH4000/humidity'))
-        # possible catch needed here
-        return humidity
+        try:
+          humidity = float(ow.owfs_get('26.378C21010000/HIH4000/humidity'))
+          return humidity
+        except ow.exError, e:
+          logerr("Failed attempt to get inHumid data: %s" % ( e))
+          return None    
 
 class Barometer(object):
     def __init__(self):
         """Some text"""
 
     def value_at(self, time_ts):
-        altimeter = float(ow.owfs_get('26.C9AABC000000/B1-R1-A/pressure'))
-        # possible catch needed here
-        return altimeter
+        try:
+          altimeter = float(ow.owfs_get('26.C9AABC000000/B1-R1-A/pressure'))
+          return altimeter
+        except ow.exError, e:
+          logerr("Failed attempt to get Barometer data: %s" % ( e))
+          return None        
 
 class RainCount(object):
     def __init__(self):
@@ -235,6 +241,10 @@ class RainCount(object):
         self.CNT_INDEX = 1
 
     def value_at(self, time_ts):
+        """Returns rain and rain rate
+        Various rain rate algorithms are implemented and returned.
+        User can decide which they want and assign it to 
+        """
         try:
           rainCnt = int(ow.owfs_get('1D.22AA0D000000/counters.B'))
         except ow.exError, e:
@@ -288,11 +298,11 @@ class RainCount(object):
             return (rain, None, None, None)
         time_delta_s = self.rainpipe[count-1][self.TIME_INDEX] - self.rainpipe[0][self.TIME_INDEX]
         cnt_delta = self.rainpipe[count-1][self.CNT_INDEX] - self.rainpipe[0][self.CNT_INDEX]
-        rainrate = (60*60) * self.bucket_size * cnt_delta/time_delta_s
+        rainrateA = (60*60) * self.bucket_size * cnt_delta/time_delta_s
         logdbg("1WIRE: Rainrate #1 Queue %s" % (self.rainpipe))
-        logdbg("1WIRE: Rainrate #1 %s %s %s" % (rainrate, time_delta_s, cnt_delta))
+        logdbg("1WIRE: Rainrate #1 %s %s %s" % (rainrateA, time_delta_s, cnt_delta))
         
-        rainrateA = rainrate
+
         
         # *** METHOD 2 ***
         # The Davis way
@@ -316,30 +326,31 @@ class RainCount(object):
             logdbg("1WIRE: Rainrate #2 Ignore First tip %s %s" % (rainCnt, self._last_detected_tip_cnt))
             self._last_detected_tip_cnt = self._this_tip_cnt
             self._last_detected_tip_ts = self._this_tip_ts
-            rainrate = None # We cant calculate a rate on first tip from power up so return
+            rainrateB = None # We cant calculate a rate on first tip from power up so return
           else :
             time_delta_s = self._this_tip_ts - self._last_detected_tip_ts
             cnt_delta = self._this_tip_cnt - self._last_detected_tip_cnt
-            rainrate = (60*60)/time_delta_s * self.bucket_size * cnt_delta # same as wxformulas.calculate_rain_rate()
+            rainrateB = (60*60)/time_delta_s * self.bucket_size * cnt_delta # same as wxformulas.calculate_rain_rate()
             # Tidy up ready for next tip
-            logdbg("1WIRE: Rainrate #2 Tip %s %s %s" % (cnt_delta, time_delta_s, rainrate))
+            logdbg("1WIRE: Rainrate #2 Tip %s %s %s" % (cnt_delta, time_delta_s, rainrateB))
         else :
           # Bucket did not tip this iteration
           if (self._last_detected_tip_ts is None) :
             logdbg("1WIRE: Rainrate #2 Silence %s %s" % (rainCnt, self._last_detected_tip_cnt))
-            rainrate = None # We cant calculate a rate on first tip from power up so return
+            rainrateB = None # We cant calculate a rate on first tip from power up so return
           else :
             # This implements the decay refered to by Davis
             time_delta_s = time_ts - self._last_detected_tip_ts
             cnt_delta = rainCnt - self._last_detected_tip_cnt
-            rainrate = (60*60)/time_delta_s * self.bucket_size * cnt_delta # same as wxformulas.calculate_rain_rate()
-            logdbg("1WIRE: Rainrate #2 Decay %s %s %s" % (cnt_delta, time_delta_s, rainrate))
+            rainrateB = (60*60)/time_delta_s * self.bucket_size * cnt_delta # same as wxformulas.calculate_rain_rate()
+            logdbg("1WIRE: Rainrate #2 Decay %s %s %s" % (cnt_delta, time_delta_s, rainrateB))
             if time_ts - self._this_tip_ts > 15 * 60 :
-              # if we didnt tip this time and its is at least 15 minutes since this tip force the rate to zero
-              rainrate = 0
-              logdbg("1WIRE: Rainrate #2 Truncated %s %s %s" % (cnt_delta, time_delta_s, rainrate))
+              # If we didnt tip this time and its is at least 15 minutes since this tip force the rate to zero
+              rainrateB = 0
+              logdbg("1WIRE: Rainrate #2 Truncated %s %s %s" % (cnt_delta, time_delta_s, rainrateB))
         
-        rainrateB = rainrate   
+        # By default set rainrate to algorithm #2
+        rainrate = rainrateB   
         
         self._last_rain_cnt = rainCnt
         return (rain, rainrate, rainrateA, rainrateB)
